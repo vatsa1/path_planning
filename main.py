@@ -5,6 +5,17 @@ import random
 import numpy as np
 import argparse
 from rrt import *
+
+def visualize_path(q_1, q_2, env, color=[0, 1, 0]):
+    """
+    Draw a line between two configurations in task space.
+    """
+    env.set_joint_positions(q_1)
+    point_1 = p.getLinkState(env.robot_body_id, 9)[0]
+    env.set_joint_positions(q_2)
+    point_2 = p.getLinkState(env.robot_body_id, 9)[0]
+    p.addUserDebugLine(point_1, point_2, color, 1.0)
+
 def test_robot_movement(num_trials, env):
     # Problem 1: Basic robot movement
     # Implement env.move_tool function in sim.py. More details in env.move_tool description
@@ -58,7 +69,7 @@ def test_rrt(num_trials, env):
         if grasp_success:
             # get a list of robot configuration in small step sizes
             path_conf = rrt(env.robot_home_joint_config,
-                            env.robot_goal_joint_config, MAX_ITERS, delta_q, 0.4, env)
+                            env.robot_goal_joint_config, MAX_ITERS, delta_q, 0.4, env, visualize_edge_fn=visualize_path)
             
             if path_conf is None:
                 print(

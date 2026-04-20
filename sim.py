@@ -193,26 +193,37 @@ class PyBulletSim:
             @param position: Target position of the end-effector link
             @param orientation: Target orientation of the end-effector link
         """
-        target_joint_state = np.zeros((6,))  # this should contain appropriate joint angle values
+        target_joint_state = np.zeros((len(self._robot_joint_indices),))  # this should contain appropriate joint angle values
         # ========= TODO: Problem 1 ========
         # Using inverse kinematics (p.calculateInverseKinematics), find out the target joint configuration of the robot
         # in order to reach the desired end_effector position and orientation
         # HINT: p.calculateInverseKinematics takes in the end effector **link index** and not the **joint index**. You can use 
         #   self.robot_end_effector_link_index for this 
         # HINT: You might want to tune optional parameters of p.calculateInverseKinematics for better performance
-        target_joint_state = p.calculateInverseKinematics(self.robot_body_id,self.robot_end_effector_link_index,position,
-                                                          orientation,maxNumIterations=150,residualThreshold=10e-5)
+        ik_solution = p.calculateInverseKinematics(
+            self.robot_body_id,
+            self.robot_end_effector_link_index,
+            position,
+            orientation,
+            maxNumIterations=200,
+            residualThreshold=1e-5,
+        )
+        target_joint_state = np.array(ik_solution[:len(self._robot_joint_indices)])
         
         # ===============================
 
-        self.move_joints(target_joint_state)
+        self.move_joints(target_joint_state, speed=speed)
 
     def get_grasp_position_angle(self, object_id):
         position, grasp_angle = np.zeros(3), 0
         # ========= TODO: Problem 2 ============
         # Get position and orientation (yaw in radians) of the gripper for grasping
-        position, grasp_angle = p.getBasePositionAndOrientation(object_id)
-        grasp_angle = grasp_angle[0]
+        object_position, object_orientation = p.getBasePositionAndOrientation(object_id)
+        _, _, object_yaw = p.getEulerFromQuaternion(object_orientation)
+
+        # Top-down grasp at object center with jaws perpendicular to object yaw.
+        position = np.array(object_position)
+        grasp_angle = ((object_yaw + np.pi / 2.0 + np.pi) % (2 * np.pi)) - np.pi
         # ==================================
         return position, grasp_angle
 
@@ -246,25 +257,24 @@ class PyBulletSim:
         pre_grasp_position_over_object = grasp_position+np.array([0, 0, 0.1])
         post_grasp_position = grasp_position+np.array([0, 0, 0.3])
         grasp_success = False
-        # ========= TODO: Problem 2 ============
-        # Implement the following grasp sequence:
-        # 1. open gripper
+
+        # 1. Open gripper
         self.open_gripper()
-        # 2. Move gripper to pre_grasp_position_over_bin
+        # 2. Move gripper to pre-grasp position over bin
         self.move_tool(pre_grasp_position_over_bin, gripper_orientation)
-        # 3. Move gripper to pre_grasp_position_over_object
+        # 3. Move gripper to pre-grasp position over object
         self.move_tool(pre_grasp_position_over_object, gripper_orientation)
-        # 4. Move gripper to grasp_position
+        # 4. Move gripper to grasp position
         self.move_tool(grasp_position, gripper_orientation)
         # 5. Close gripper
         self.close_gripper()
-        # 6. Move gripper to post_grasp_position
+        # 6. Move gripper to post-grasp position
         self.move_tool(post_grasp_position, gripper_orientation)
-        # 7. Move robot to robot_home_configuration
+        # 7. Move robot to home joint configuration
         self.robot_go_home()
-        # 8. Detect whether or not the object was grasped and return grasp_success
-        grasp_success = self.check_grasp_success()     
-        # ============================
+        # 8. Detect grasp success
+        grasp_success = self.check_grasp_success()
+
         return grasp_success
 
     def execute_place(self, place_angle=90.):

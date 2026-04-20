@@ -33,58 +33,82 @@ def construct_path(parents, q_init, q_goal):
     current = q_goal
     while not np.array_equal(current, q_init):
         parent = parents[tuple(current)]
-        #print(parent)
+        if parent is None:
+            return None
         path.append(parent)
-        #print(path)
         current = parent
     path.reverse()
     return path
 
+def semi_random_sample(q_goal, steer_goal_p, dof):
+    """
+    With steer_goal_p probability, sample q_goal.
+    Otherwise sample uniformly from joint range [-pi, pi].
+    """
+    if np.random.rand() < steer_goal_p:
+        return np.array(q_goal, dtype=float)
+    return np.random.uniform(low=-np.pi, high=np.pi, size=dof)
+
+def nearest(vertices, q_rand):
+    """
+    Returns nearest vertex to q_rand using L1 distance.
+    """
+    return min(vertices, key=lambda q: np.sum(np.abs(q - q_rand)))
+
 def steer(q_near, q_rand, delta_q):
-    q_new = q_near + delta_q * (q_rand - q_near) / np.linalg.norm(q_rand - q_near)
+    direction = q_rand - q_near
+    norm = np.linalg.norm(direction)
+    if norm < 1e-9:
+        return np.array(q_near, dtype=float)
+    q_new = q_near + delta_q * direction / norm
     return q_new
 
-def rrt(q_init, q_goal, MAX_ITERS, delta_q, steer_goal_p, env):
+def obstacle_free(q_new, env):
+    """
+    For this assignment, it is sufficient to check q_new only.
+    """
+    return not env.check_collision(q_new)
+
+def rrt(q_init, q_goal, MAX_ITERS, delta_q, steer_goal_p, env, visualize_edge_fn=None):
     """
     :param q_init: initial configuration
     :param q_goal: goal configuration
     :param MAX_ITERS: max number of iterations
     :param delta_q: steer distance
     :param steer_goal_p: probability of steering towards the goal
+    :param visualize_edge_fn: optional callback to visualize an edge (q_1, q_2, env, color)
     :returns path: list of configurations (joint angles) if found a path within MAX_ITERS, else None
     """
-    # ========= TODO: Problem 3 ========
-    # Implement RRT code here. This function should return a list of joint configurations
-    # that the robot should take in order to reach q_goal starting from q_init
-    # Use visualize_path() to visualize the edges in the exploration tree for part (b)
-    #env_sim = PyBulletSim()
-    v = [q_init]
-    e= {}
-    parents = {tuple(q_init): None}
-    for i in range(MAX_ITERS):
-        if np.random.rand() < steer_goal_p:
-            q_rand = q_goal
-        else:
-            q_rand= np.random.uniform(low=-np.pi, high=np.pi, size=6)
+    q_init = np.array(q_init, dtype=float)
+    q_goal = np.array(q_goal, dtype=float)
+    dof = len(q_init)
 
-        q_nearest = min(v, key=lambda q: np.linalg.norm(q - q_rand)) #compute nearest node to q_rand
-        q_new = steer(q_nearest, q_rand, delta_q) #steer towards q_rand
-        if PyBulletSim.check_collision(env,q_new) == False:
-            v.append(q_new)
-            #e[q_nearest, q_new] = 1
+    vertices = [q_init]
+    edges = []
+    parents = {tuple(q_init): None}
+
+    for _ in range(MAX_ITERS):
+        q_rand = semi_random_sample(q_goal, steer_goal_p, dof)
+        q_nearest = nearest(vertices, q_rand)
+        q_new = steer(q_nearest, q_rand, delta_q)
+
+        if obstacle_free(q_new, env):
+            vertices.append(q_new)
+            edges.append((q_nearest, q_new))
             parents[tuple(q_new)] = q_nearest
-            
+
+            if visualize_edge_fn is not None:
+                visualize_edge_fn(q_nearest, q_new, env, color=[0, 1, 0])
+            else:
+                visualize_path(q_nearest, q_new, env, color=[0, 1, 0])
+
             if np.linalg.norm(q_new - q_goal) < delta_q:
-                v.append(q_goal)
-                #e[q_new, q_goal] = 1
+                vertices.append(q_goal)
+                edges.append((q_new, q_goal))
                 parents[tuple(q_goal)] = q_new
-                #print(parents)
-                path= construct_path(parents,q_init, q_goal)
-                # print(path)
+                path = construct_path(parents, q_init, q_goal)
                 return path
-            
-            visualize_path(q_nearest, q_new, env)
-    # ==================================
+
     return None
 
 def execute_path(path_conf, env):
@@ -102,29 +126,35 @@ def execute_path(path_conf, env):
     # joint_5_pos = p.getLinkState(env.robot_body_id, 9)[0]
     # marker_1 = sim.SphereMarker(joint_5_pos, 0.02, [1, 0, 0])
     # markers.append(marker_1)
-    markers=[]
-    speed=.07
-    
-    for i in range(len(path_conf)):
-        #print(path_conf)
-        #env.set_joint_positions(conf)
+    if path_conf is None or len(path_conf) == 0:
+        return None
+
+    markers = []
+    speed = 0.07
+
+    # Execute forward path and visualize joint-5 positions with red spheres.
+    for conf in path_conf:
+        env.move_joints(conf, speed=speed)
         joint_5_pos = p.getLinkState(env.robot_body_id, 9)[0]
-        #print(joint_5_pos)
-        marker = sim.SphereMarker(joint_5_pos, 0.02, [1, 0, 0, 0.8])
-        markers.append(marker)
-        env.move_joints(path_conf[i],speed)
-        time.sleep(0.50)
+        markers.append(
+            sim.SphereMarker(joint_5_pos, radius=0.02, rgba_color=[1, 0, 0, 0.8])
+        )
+        time.sleep(0.05)
 
-
+    # Drop object at destination bin.
     env.open_gripper()
-    time.sleep(0.50)
+    env.step_simulation(120)
     env.close_gripper()
-    time.sleep(0.50)
+    env.step_simulation(120)
 
+    # Retrace path back to the origin.
     for conf in reversed(path_conf):
-        env.set_joint_positions(conf)
+        env.move_joints(conf, speed=speed)
+        time.sleep(0.05)
 
-    for marker in markers:
-        marker.__del__()
+    # Delete all joint-5 visualizations once robot returns.
+    while markers:
+        marker = markers.pop()
+        del marker
     # ==================================
     return None

@@ -6,3 +6,8 @@ predictions/
 *.pth.tar
 *.pyc
 *.DS_Store
+*.mp4
+*.gif.tmp
+.pytest_cache/
+.mypy_cache/
+*.log
